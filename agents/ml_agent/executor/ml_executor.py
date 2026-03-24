@@ -37,6 +37,7 @@ class MLExecutorAgentConfig:
     llm_config: LLMConfig
     react_max_steps: int = 10
     evo_coder_timeout: int = 7200
+    execution_command_prefix: list[str] | None = None
 
 
 @dataclass
@@ -299,6 +300,9 @@ class MLExecutorAgent(Worker):
         stage: Stage,
         task_config: TaskConfig,
     ) -> CoderResult:
+        logger.info(
+            f"MLExecutor using execution_command_prefix={self.config.execution_command_prefix!r} for stage={stage.value}"
+        )
 
         evaluator = STAGE_EVALUATORS[stage](
             EvoCoderEvaluatorConfig(
@@ -306,6 +310,7 @@ class MLExecutorAgent(Worker):
                     utils.get_evocoder_evaluate_path(context, stage.value)
                 ),
                 timeout=self.config.evo_coder_timeout,
+                execution_command_prefix=self.config.execution_command_prefix,
             )
         )
 
@@ -314,6 +319,7 @@ class MLExecutorAgent(Worker):
                 llm_config=self.config.llm_config,
                 context_provider=STAGE_PROVIDERS[stage](),
                 evaluator=evaluator,
+                execution_command_prefix=self.config.execution_command_prefix,
             )
         )
 

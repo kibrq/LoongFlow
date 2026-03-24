@@ -16,6 +16,8 @@ from loongflow.agentsdk.logger.logger import get_logger
 from loongflow.framework.pes.context import EvaluatorConfig
 from loongflow.framework.pes.evaluator import LoongFlowEvaluator
 
+logger = get_logger(__name__)
+
 
 @dataclass
 class EvoCoderEvaluatorConfig:
@@ -25,6 +27,7 @@ class EvoCoderEvaluatorConfig:
 
     workspace_path: str = None
     timeout: int = 1800
+    execution_command_prefix: list[str] | None = None
 
 
 class EvoCoderEvaluator(LoongFlowEvaluator, abc.ABC):
@@ -33,10 +36,18 @@ class EvoCoderEvaluator(LoongFlowEvaluator, abc.ABC):
     """
 
     def __init__(self, config: EvoCoderEvaluatorConfig):
+        logger.info(
+            f"EvoCoderEvaluator initialized with execution_command_prefix={config.execution_command_prefix!r}"
+        )
+        prefix_literal = repr(config.execution_command_prefix)
+        evaluate_code = (
+            f"EXECUTION_COMMAND_PREFIX = {prefix_literal}\n\n"
+            f"{self._get_evaluate_code()}"
+        )
         cfg = EvaluatorConfig(
             workspace_path=config.workspace_path,
             timeout=config.timeout,
-            evaluate_code=self._get_evaluate_code(),
+            evaluate_code=evaluate_code,
         )
         super().__init__(cfg)
 
@@ -230,15 +241,67 @@ def check_nan_inf_safe(data):
         return False
 """
 
+COMMON_EXECUTION_FOOTER = """
+def evaluate(temp_dir):
+    if EXECUTION_COMMAND_PREFIX and os.environ.get("LOONGFLOW_EVAL_LOCAL") != "1":
+        if not isinstance(EXECUTION_COMMAND_PREFIX, list) or not all(isinstance(part, str) for part in EXECUTION_COMMAND_PREFIX):
+            return {
+                "score": 0.0,
+                "status": "validation_failed",
+                "summary": "EXECUTION_COMMAND_PREFIX must be a list of strings.",
+            }
+
+        output_file_path = os.path.join(temp_dir, "execution_env_result.json")
+        env = os.environ.copy()
+        env["LOONGFLOW_EVAL_LOCAL"] = "1"
+
+        completed = subprocess.run(
+            [*EXECUTION_COMMAND_PREFIX, "python", __file__, temp_dir, output_file_path],
+            stdout=sys.stdout,
+            stderr=sys.stderr,
+            text=True,
+            check=False,
+            env=env,
+        )
+
+        if not os.path.exists(output_file_path):
+            return {
+                "score": 0.0,
+                "status": "validation_failed",
+                "summary": f"Execution-env evaluator did not produce result file. Return code: {completed.returncode}",
+            }
+
+        try:
+            with open(output_file_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            return {
+                "score": 0.0,
+                "status": "validation_failed",
+                "summary": f"Failed to load execution-env result: {e}",
+                "artifacts": {"traceback": traceback.format_exc()},
+            }
+
+    return evaluate_local(temp_dir)
+
+
+if __name__ == "__main__":
+    temp_dir = sys.argv[1]
+    output_file_path = sys.argv[2]
+    result = evaluate_local(temp_dir)
+    with open(output_file_path, "w", encoding="utf-8") as f:
+        json.dump(result, f, ensure_ascii=False, indent=2)
+"""
+
 
 class EDAEvaluator(EvoCoderEvaluator):
     """evaluate eda code"""
 
     def _get_evaluate_code(self) -> str:
         return f"""
-import os, re, sys, traceback
+import json, os, re, subprocess, sys, traceback
 
-def evaluate(temp_dir):
+def evaluate_local(temp_dir):
     report = None
     try:
         if temp_dir not in sys.path: sys.path.insert(0, temp_dir)
@@ -280,6 +343,8 @@ def evaluate(temp_dir):
             "summary": f"error info: {{e}}; eda_info() result: {{report}}", 
             "artifacts": {{"traceback": traceback.format_exc()}}
         }}
+
+{COMMON_EXECUTION_FOOTER}
 """
 
 
@@ -288,12 +353,12 @@ class LoadDataEvaluator(EvoCoderEvaluator):
 
     def _get_evaluate_code(self) -> str:
         return f"""
-import sys,traceback
+import json, os, subprocess, sys, traceback
 
 {COMMON_UTILS}
 
 
-def evaluate(temp_dir):
+def evaluate_local(temp_dir):
     try:
         if 'load_data' in sys.modules: del sys.modules['load_data']
         if temp_dir not in sys.path:
@@ -361,6 +426,7 @@ def evaluate(temp_dir):
             "artifacts": {{"traceback": traceback.format_exc()}}
         }}
 
+{COMMON_EXECUTION_FOOTER}
 """
 
 
@@ -370,10 +436,10 @@ class GetSplitterEvaluator(EvoCoderEvaluator):
 
     def _get_evaluate_code(self) -> str:
         return f"""
-import sys, traceback, numpy as np, pandas as pd
+import json, os, subprocess, sys, traceback, numpy as np, pandas as pd
 {COMMON_UTILS}
 
-def evaluate(temp_dir):
+def evaluate_local(temp_dir):
     try:
         if 'get_splitter' in sys.modules: del sys.modules['get_splitter']
         if 'load_data' in sys.modules: del sys.modules['load_data']
@@ -442,6 +508,8 @@ def evaluate(temp_dir):
 
     except Exception as e:
         return {{"score": 0.0, "status": "validation_failed", "summary": f"Validation logic error: {{str(e)}}", "artifacts": {{"traceback": traceback.format_exc()}}}}
+
+{COMMON_EXECUTION_FOOTER}
 """
 
 
@@ -451,11 +519,11 @@ class PreprocessEvaluator(EvoCoderEvaluator):
 
     def _get_evaluate_code(self) -> str:
         return f"""
-import sys,traceback,copy,pandas as pd,numpy as np
+import json, os, subprocess, sys, traceback, copy, pandas as pd, numpy as np
 
 {COMMON_UTILS}
 
-def evaluate(temp_dir):
+def evaluate_local(temp_dir):
     try:
         if 'preprocess' in sys.modules: del sys.modules['preprocess']
         if 'load_data' in sys.modules: del sys.modules['load_data']
@@ -535,6 +603,8 @@ def evaluate(temp_dir):
             "summary": f"Validation logic error: {{str(e)}}",
             "artifacts": {{"traceback": traceback.format_exc()}}
         }}
+
+{COMMON_EXECUTION_FOOTER}
 """
 
 
@@ -544,11 +614,11 @@ class TrainAndPredictEvaluator(EvoCoderEvaluator):
 
     def _get_evaluate_code(self) -> str:
         return f"""
-import numpy as np,sys,traceback
+import json, os, subprocess, numpy as np, sys, traceback
 
 {COMMON_UTILS}
 
-def evaluate(temp_dir):
+def evaluate_local(temp_dir):
     try:
         keys_to_remove = ['train_and_predict', 'preprocess', 'load_data']
         for key in keys_to_remove:
@@ -626,6 +696,8 @@ def evaluate(temp_dir):
             "summary": f"Validation logic internal error: {{str(e)}}",
             "artifacts": {{"traceback": traceback.format_exc()}}
         }}
+
+{COMMON_EXECUTION_FOOTER}
 """
 
 
@@ -635,11 +707,11 @@ class EnsembleEvaluator(EvoCoderEvaluator):
 
     def _get_evaluate_code(self) -> str:
         return f"""
-import sys, traceback, numpy as np, pandas as pd
+import json, os, subprocess, sys, traceback, numpy as np, pandas as pd
 
 {COMMON_UTILS}
 
-def evaluate(temp_dir):
+def evaluate_local(temp_dir):
     try:
         keys_to_remove = ['ensemble', 'train_and_predict', 'preprocess', 'load_data']
         for key in keys_to_remove:
@@ -722,6 +794,7 @@ def evaluate(temp_dir):
             "artifacts": {{"traceback": traceback.format_exc()}}
         }}
 
+{COMMON_EXECUTION_FOOTER}
 """
 
 
@@ -731,9 +804,9 @@ class WorkflowEvaluator(EvoCoderEvaluator):
 
     def _get_evaluate_code(self) -> str:
         return f"""
-import os, sys, time, pandas as pd, traceback
+import json, os, subprocess, sys, time, pandas as pd, traceback
 
-def evaluate(temp_dir):
+def evaluate_local(temp_dir):
     try:
         if temp_dir not in sys.path: sys.path.insert(0, temp_dir)
         # import all modules
@@ -937,4 +1010,6 @@ def evaluate(temp_dir):
 
     except Exception as e:
         return {{"score": 0.0, "status": "validation_failed", "summary": f"{{e}}", "artifacts": {{"traceback": traceback.format_exc()}}}}
+
+{COMMON_EXECUTION_FOOTER}
 """

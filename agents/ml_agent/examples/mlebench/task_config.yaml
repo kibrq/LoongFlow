@@ -32,6 +32,8 @@ executors:
   ml_executor:
     react_max_steps: 10
     evo_coder_timeout: 86300 # 24h
+    # Optional: run generated solutions with a command prefix.
+    # execution_command_prefix: ["micromamba", "run", "-n", "loongflow_exec"]
 
 summarizers:
   # The default summarizer provided by the LoongFlow framework.

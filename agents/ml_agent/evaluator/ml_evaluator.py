@@ -36,6 +36,7 @@ class MLEvaluator(LoongFlowEvaluator):
         base_dir = os.path.dirname(evaluator_file_path)
         output_file_path = os.path.join(base_dir, "evaluation_result.json")
         log_file_path = os.path.join(base_dir, "evaluation_process.log")
+        original_cwd = os.getcwd()
 
         original_stdout = sys.stdout
         original_stderr = sys.stderr
@@ -50,6 +51,10 @@ class MLEvaluator(LoongFlowEvaluator):
             f"[Child PID:{pid}] Started. Evaluator path: {evaluator_file_path}"
         )
         logger.debug(f"[Child PID:{pid}] Target LLM path: {llm_file_path}")
+
+        # mlebench creates a relative diskcache "cache/" directory at import time.
+        # Run from the writable evaluation workspace so that import-time cache setup succeeds.
+        os.chdir(base_dir)
 
         result_data = {}
 
@@ -125,6 +130,7 @@ class MLEvaluator(LoongFlowEvaluator):
         try:
             log_file.flush()
             os.fsync(log_file.fileno())
+            os.chdir(original_cwd)
             log_file.close()
         except:
             pass

@@ -37,6 +37,7 @@ class EvoCoderConfig:
     context_provider: StageContextProvider
     evaluator: EvoCoderEvaluator
     max_rounds: int = 10
+    execution_command_prefix: list[str] | None = None
 
 
 class EvoCoder(AgentBase):
@@ -316,15 +317,25 @@ class EvoCoder(AgentBase):
             return "No command generated, package not installed", usage
         try:
             logger.info(f"EvoCoder: Installing missing package: {cmd}")
-            result = subprocess.run(
-                cmd,
-                shell=True,
-                check=True,
-                text=True,
-                timeout=600,  # set a default timeout
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
+            if self.config.execution_command_prefix:
+                result = subprocess.run(
+                    [*self.config.execution_command_prefix, "bash", "-lc", cmd],
+                    check=True,
+                    text=True,
+                    timeout=600,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+            else:
+                result = subprocess.run(
+                    cmd,
+                    shell=True,
+                    check=True,
+                    text=True,
+                    timeout=600,  # set a default timeout
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
             logger.info(f"EvoCoder: Installed result: {result}")
             return result, usage
         except Exception as e:

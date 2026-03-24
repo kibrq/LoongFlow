@@ -62,6 +62,7 @@ class MLPlannerAgentConfig:
     system_prompt: str = ML_PLANNER_SYSTEM_PROMPT
     user_prompt: str = ML_PLANNER_USER_PROMPT
     evo_coder_timeout: int = 1800
+    execution_command_prefix: list[str] | None = None
 
 
 # --- Main Agent Class ---
@@ -112,8 +113,10 @@ class MLPlannerAgent(Worker):
                                 )
                             ),
                             timeout=self.config.evo_coder_timeout,
+                            execution_command_prefix=self.config.execution_command_prefix,
                         )
                     ),
+                    execution_command_prefix=self.config.execution_command_prefix,
                 ),
                 token_usage=eda_token_usage,
             )
