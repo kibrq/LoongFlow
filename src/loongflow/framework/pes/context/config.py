@@ -186,8 +186,6 @@ class EvolveConfig(BaseModel):
     )
     initial_score: float = Field(
         default=None,
-        ge=0.0,
-        le=1.0,
         description="The initial score to start the evolution process.",
     )
     initial_evaluation: str = Field(
@@ -208,8 +206,6 @@ class EvolveConfig(BaseModel):
     )
     target_score: float = Field(
         default=1.0,
-        ge=0.0,
-        le=1.0,
         description="The target score to achieve, at which point the evolution will stop.",
     )
     concurrency: int = Field(

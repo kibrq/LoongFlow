@@ -7,7 +7,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import pandas as pd
 from mlebench.data import get_leaderboard, is_dataset_prepared
 from mlebench.registry import registry
@@ -15,35 +14,6 @@ from mlebench.utils import (
     load_answers,
     read_csv,
 )
-
-
-def normalize_score(
-    leaderboard: pd.DataFrame, my_score: float, is_lower_better: bool = False
-) -> float:
-    """
-    Normalize score to (0, 1].
-    - Best-or-better score maps to 1.0
-    - Worse scores decay smoothly as distance-to-best increases
-    """
-    scores = leaderboard["score"].values.astype(float)
-    if len(scores) == 0:
-        raise ValueError("Leaderboard is empty, cannot normalize score.")
-
-    if is_lower_better:
-        best = float(np.min(scores))
-    else:
-        best = float(np.max(scores))
-
-    if (is_lower_better and my_score <= best) or (not is_lower_better and my_score >= best):
-        return 1.0
-
-    gap = (my_score - best) if is_lower_better else (best - my_score)
-    gap = max(0.0, float(gap))
-
-    # Scale by best magnitude to support metrics with negative values or
-    # different ranges; 1.0 keeps behavior stable when |best| is tiny.
-    scale = max(abs(best), 1.0)
-    return float(1.0 / (1.0 + (gap / scale)))
 
 
 def _is_truthy_env(name: str, default: bool = False) -> bool:
@@ -65,20 +35,6 @@ def _load_competition(data_dir: Path, competition_id: str):
     return competition
 
 
-def _build_rank(rank_info: dict[str, Any], raw_score: float) -> dict[str, Any]:
-    return {
-        "gold_medal": bool(rank_info["gold_medal"]),
-        "silver_medal": bool(rank_info["silver_medal"]),
-        "bronze_medal": bool(rank_info["bronze_medal"]),
-        "above_median": bool(rank_info["above_median"]),
-        "leaderboard_score": raw_score,
-        "leaderboard_gold": rank_info["gold_threshold"],
-        "leaderboard_silver": rank_info["silver_threshold"],
-        "leaderboard_bronze": rank_info["bronze_threshold"],
-        "leaderboard_median": rank_info["median_threshold"],
-    }
-
-
 def _score_with_grader(competition, submission_df: pd.DataFrame, answers: Any) -> float:
     score = competition.grader(submission_df, answers)
     if score is None:
@@ -86,13 +42,15 @@ def _score_with_grader(competition, submission_df: pd.DataFrame, answers: Any) -
     return float(score)
 
 
-def _normalize_with_leaderboard(competition, raw_score: float) -> tuple[float, dict[str, Any]]:
-    competition_leaderboard = get_leaderboard(competition)
-    lower_better = competition.grader.is_lower_better(competition_leaderboard)
-    rank_info = competition.grader.rank_score(raw_score, competition_leaderboard)
+def _infer_is_lower_better(competition) -> bool:
+    """
+    Infer score direction using the mle-bench grader.
 
-    rank = _build_rank(rank_info, raw_score)
-    return normalize_score(competition_leaderboard, raw_score, lower_better), rank
+    V1 intentionally keeps this inference source, but removes leaderboard-based
+    normalization from the returned LoongFlow score.
+    """
+    competition_leaderboard = get_leaderboard(competition)
+    return bool(competition.grader.is_lower_better(competition_leaderboard))
 
 
 def _score_oof_submission(
@@ -213,12 +171,8 @@ def evaluate(task_data_path, best_code_path, artifacts):
             oof_submission_df=oof_submission_df,
             oof_answer_df=oof_answer_df,
         )
-        oof_norm_score, _ = _normalize_with_leaderboard(
-            competition=competition,
-            raw_score=oof_raw_score,
-        )
-
-        final_score = float(max(0.0, min(1.0, oof_norm_score)))
+        is_lower_better = _infer_is_lower_better(competition)
+        final_score = -oof_raw_score if is_lower_better else oof_raw_score
 
     except Exception as e:
         return {
@@ -244,14 +198,10 @@ def evaluate(task_data_path, best_code_path, artifacts):
                 submission_df=test_submission_df,
                 answers=test_answers,
             )
-            test_norm_score, test_rank_info = _normalize_with_leaderboard(
-                competition=competition,
-                raw_score=test_raw_score,
-            )
             _write_test_debug_result(test_result_path, {
                 "raw_score": test_raw_score,
-                "norm_score": test_norm_score,
-                "rank_info": test_rank_info,
+                "is_lower_better": is_lower_better,
+                "score_mode": "raw_metric_sign_adjusted",
             })
         except Exception as e:
             _write_test_debug_result(test_result_path, {
@@ -263,9 +213,10 @@ def evaluate(task_data_path, best_code_path, artifacts):
         "summary": "OOF evaluation successful",
         "score": final_score,
         "metrics": {
-            "oof_norm_score": oof_norm_score,
             "oof_raw_score": oof_raw_score,
             "oof_coverage": oof_coverage,
+            "is_lower_better": is_lower_better,
+            "score_mode": "raw_metric_sign_adjusted",
         },
         "artifacts": {
             "oof_submission_file_path": str(oof_submission_file_path),

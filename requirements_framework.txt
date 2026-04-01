@@ -7,7 +7,7 @@ uvicorn==0.38.0
 httpx[socks]==0.28.1
 matplotlib==3.9.4
 scipy==1.16.3
-litellm==1.80.10
+litellm
 flask==3.1.2
 sympy==1.14.0
 claude-agent-sdk==0.1.20

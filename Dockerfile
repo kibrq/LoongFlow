@@ -1,7 +1,8 @@
 FROM mlebench-env:latest
 
 ENV NONROOT_USER=nonroot
-ENV LOONGFLOW_ENV_NAME=loongflow_ml
+ENV METHOD=LoongFlow
+ENV LOONGFLOW_ENV_NAME=${METHOD}
 
 USER root
 
@@ -34,5 +35,7 @@ RUN git clone https://github.com/kibrq/mle-bench.git /tmp/mle-bench \
     && micromamba run -n "${LOONGFLOW_ENV_NAME}" pip install --no-cache-dir /tmp/mle-bench \
     && rm -rf /tmp/mle-bench \
     && micromamba clean --all --yes
+
+RUN mkdir -p /home/${NONROOT_USER}/${METHOD}
 
 USER root
